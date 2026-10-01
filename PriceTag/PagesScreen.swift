@@ -7,6 +7,7 @@
 
 import SwiftUI
 
+/// The list of saved pages, each shown with a thumbnail of its four signs.
 struct PagesScreen: View {
     @EnvironmentObject var store: Store
 

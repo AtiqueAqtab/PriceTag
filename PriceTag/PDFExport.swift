@@ -8,6 +8,12 @@
 import SwiftUI
 import UIKit
 
+/// Draws up to four signs onto a US Letter PDF.
+///
+/// - Parameters:
+///   - page: The page being exported. Its title becomes the file name.
+///   - signs: The signs to draw, top to bottom.
+/// - Returns: A URL to the PDF in the temporary folder, or `nil` if writing failed.
 @MainActor
 func exportPDF(page: SignPage, signs: [Sign]) -> URL? {
 

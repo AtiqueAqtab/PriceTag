@@ -7,6 +7,9 @@
 
 import SwiftUI
 
+/// Edits one sign, with a live preview above the fields.
+///
+/// Only the fields used by the sign's type are shown.
 struct SignEditor: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var logos = LogoLibrary.shared

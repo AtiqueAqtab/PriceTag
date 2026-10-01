@@ -14,6 +14,10 @@
 
 import SwiftUI
 
+/// Edits one page of four signs.
+///
+/// Tap a slot to edit its sign or change its type. The bottom bar
+/// opens the print preview.
 struct PageComposer: View {
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) private var dismiss

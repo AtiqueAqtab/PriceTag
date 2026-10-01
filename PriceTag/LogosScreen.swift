@@ -8,6 +8,7 @@ import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
 
+/// Browse the brand and feature logos bundled with the app.
 struct LogosScreen: View {
     @ObservedObject private var logos = LogoLibrary.shared
     @State private var kind: LogoKind = .brand

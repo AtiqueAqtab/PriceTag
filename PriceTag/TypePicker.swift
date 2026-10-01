@@ -7,6 +7,7 @@
 
 import SwiftUI
 
+/// A sheet for choosing a sign type when you add or change a sign.
 struct TypePicker: View {
     let pick: (SignType) -> Void
 

@@ -7,6 +7,7 @@
 
 import SwiftUI
 
+/// Shows the full Letter page with margins before you share or print it.
 struct PrintPreview: View {
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) private var dismiss

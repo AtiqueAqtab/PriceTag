@@ -19,8 +19,9 @@ enum Tab: String, CaseIterable {
         }
     }
 }
-
+/// The app's tab bar: Pages, Library, Templates and Logos.
 struct RootView: View {
+    /// The shared data for every tab.
     @EnvironmentObject var store: Store
     @State private var tab: Tab = .pages
 

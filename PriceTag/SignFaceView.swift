@@ -7,11 +7,15 @@
 
 import SwiftUI
 
-/// One printed sign, built at true print size: 7.5 x 2.375 inches at 72pt/inch.
+/// The sign as it appears on paper.
+///
+/// Laid out at 540 × 171 points (7.5 × 2.375 in). The same view is
+/// scaled down for the on-screen preview and drawn full size in the PDF.
 struct SignFaceView: View {
 
     let sign: Sign
 
+    /// The sign's size in points at print resolution.
     static let printSize = CGSize(width: 540, height: 171)
 
     // Swap this for .custom("Archivo Black", size:) once the font is added.

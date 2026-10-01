@@ -7,6 +7,7 @@
 
 import SwiftUI
 
+/// Signs saved for reuse. Tap one to add it to a page.
 struct LibraryScreen: View {
     @EnvironmentObject var store: Store
 
@@ -53,6 +54,7 @@ struct LibraryScreen: View {
     }
 }
 
+// Ready-made starting points for each sign type.
 struct TemplatesScreen: View {
     @EnvironmentObject var store: Store
 

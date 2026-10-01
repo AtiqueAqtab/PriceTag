@@ -7,6 +7,11 @@
 
 import Foundation
 
+/// The kinds of sign the app can make.
+///
+/// The type decides which fields the editor shows and which ones
+/// get drawn on the sign. Old saved data with retired type names
+/// is mapped to a current type when it loads.
 enum SignType: String, Codable, CaseIterable, Identifiable {
     case regular
     case sale
@@ -33,6 +38,7 @@ enum SignType: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// The text for the banner across the top of the sign, if this type has one.
     var banner: String? {
         switch self {
         case .sale:      return "SALE"
@@ -52,6 +58,10 @@ extension Sign {
     }
 }
 
+/// One printed sign.
+///
+/// A single struct holds every field any sign type might use.
+/// Prices are stored as text because the app never does math on them.
 struct Sign: Identifiable, Codable, Hashable {
     var id: UUID = UUID()
     var type: SignType = .regular
@@ -75,6 +85,7 @@ struct Sign: Identifiable, Codable, Hashable {
     var splitCents: Bool = true
 }
 
+/// A sheet of up to four signs that prints on one US Letter page.
 struct SignPage: Identifiable, Codable, Hashable {
     var id: UUID = UUID()
     var title: String = "Untitled page"

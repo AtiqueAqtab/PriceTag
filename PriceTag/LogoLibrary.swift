@@ -34,6 +34,7 @@ enum LogoKind: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// One logo image: its name, whether it's a brand or feature logo, and its version.
 struct LogoAsset: Identifiable, Codable, Hashable {
     var id: UUID = UUID()
     var name: String
@@ -58,6 +59,10 @@ let defaultFeatureNames = [
     "Gore-Tex", "D3O", "CE Level 2", "Waterproof", "Boa", "Heated"
 ]
 
+/// Finds, trims and caches logo images from Logos.bundle.
+///
+/// Each logo is downsampled and cropped to its visible pixels on
+/// first use, so padding in the source file doesn't shrink it on the sign.
 final class LogoLibrary: ObservableObject {
 
     /// Views hold this directly rather than through the environment, so the same

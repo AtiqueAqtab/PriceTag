@@ -1,13 +1,19 @@
 import SwiftUI
 import Combine
 
+/// Holds every page and saved sign, and writes them to disk.
+///
+/// Saves wait 0.7 seconds after the last change and run in the
+/// background, so typing stays smooth.
 @MainActor
 final class Store: ObservableObject {
 
+    /// The pages the user has made.
     @Published var pages: [SignPage] = [] {
         didSet { scheduleSave() }
     }
 
+    /// Signs saved for reuse on other pages./
     @Published var library: [Sign] = [] {
         didSet { scheduleSave() }
     }

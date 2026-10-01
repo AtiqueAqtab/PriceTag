@@ -7,6 +7,7 @@
 
 import SwiftUI
 
+/// Colours, font sizes and shared controls used across the app.
 extension Color {
     init(hex: UInt32) {
         self.init(
