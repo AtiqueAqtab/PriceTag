@@ -91,6 +91,34 @@ struct FieldRow: View {
     var mono: Bool = false
     var last: Bool = false
     var keyboard: UIKeyboardType = .default
+    /// Optional small tag at the trailing edge, such as "Suggested".
+    var tag: String? = nil
+    /// When set, the tag is a button that runs this, such as "Use $1178.95".
+    var onTagTap: (() -> Void)? = nil
+
+    @ViewBuilder
+    private var tagView: some View {
+        if let tag = tag {
+            if let onTagTap = onTagTap {
+                Button(action: onTagTap) {
+                    Text(tag)
+                        .font(pt(11, .semibold))
+                        .foregroundColor(.ptAccent)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.ptAccent.opacity(0.16))
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+            } else {
+                Text(tag)
+                    .font(pt(11, .medium))
+                    .foregroundColor(.ptAccent)
+                    .fixedSize()
+            }
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -107,6 +135,7 @@ struct FieldRow: View {
                 .keyboardType(keyboard)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled(true)
+                tagView
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 13)

@@ -17,7 +17,7 @@ The store used to make signs in Word. Each batch was its own document, and addin
 
 ## What it does
 
-- Five sign types: Regular, Sale (was / now / % off), Clearance, Part with fitment, and Boots & apparel
+- Five sign types: Regular, Sale (was / now / % off), End of season, Part with fitment, and Boots & apparel
 - A live preview that matches the printed sign exactly
 - Vector PDF export, shared through AirDrop, Print, Files or Mail
 - A library for saving signs and reusing them on later pages

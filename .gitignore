@@ -1,0 +1,6 @@
+.DS_Store
+xcuserdata/
+*.xcuserstate
+*.zip
+_to_delete/
+node_modules/

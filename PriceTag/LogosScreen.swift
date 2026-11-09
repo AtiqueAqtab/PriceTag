@@ -269,7 +269,7 @@ struct LogoDetailSheet: View {
                             Button(action: paste) { actionLabel("Paste from clipboard") }
                                 .buttonStyle(.plain)
 
-                            Button(action: { importing = true }) { actionLabel("Import PNG from Files") }
+                            Button(action: { importing = true }) { actionLabel("Import from Files (PNG, JPEG, SVG)") }
                                 .buttonStyle(.plain)
 
                             if asset?.hasImage == true {
@@ -344,30 +344,43 @@ struct LogoDetailSheet: View {
             guard let item = item else { return }
             Task {
                 if let data = try? await item.loadTransferable(type: Data.self) {
-                    logos.setImage(data: data, for: assetID)
-                    message = ""
+                    await apply(data)
                 } else {
                     message = "That image could not be read."
                 }
                 pick = nil
             }
         }
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.png, .jpeg, .image]) { result in
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.png, .jpeg, .svg, .image]) { result in
             guard case let .success(url) = result else { return }
             let opened = url.startAccessingSecurityScopedResource()
             defer { if opened { url.stopAccessingSecurityScopedResource() } }
             if let data = try? Data(contentsOf: url) {
-                logos.setImage(data: data, for: assetID)
-                message = ""
+                Task { await apply(data) }
             } else {
                 message = "That file could not be read."
             }
         }
     }
 
+    /// Saves artwork from a photo or file. SVG is drawn once and saved as a PNG, because
+    /// iOS cannot read SVG directly.
+    private func apply(_ data: Data) async {
+        if logos.setImage(data: data, for: assetID) {
+            message = ""
+        } else if let drawn = await SVGRasterizer.image(from: data) {
+            logos.setImage(drawn, for: assetID)
+            message = "SVG converted to a PNG."
+        } else {
+            message = "That file could not be read. Use a PNG, JPEG or SVG, or a photo."
+        }
+    }
+
     private func paste() {
         if logos.pasteImage(for: assetID) {
             message = ""
+        } else if let svg = UIPasteboard.general.data(forPasteboardType: "public.svg-image") {
+            Task { await apply(svg) }
         } else {
             message = "No image on the clipboard. Copy a logo first, then paste."
         }

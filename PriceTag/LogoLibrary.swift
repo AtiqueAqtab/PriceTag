@@ -71,15 +71,26 @@ final class LogoLibrary: ObservableObject {
 
     @Published var assets: [LogoAsset] = [] {
         didSet {
-            byID = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
+            lock.lock()
+            byID = Dictionary(assets.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             nameCache = [:]
+            lock.unlock()
             scheduleSave()
+            if loaded && !quiet { onChange?() }
         }
     }
+
+    /// Set while the shared Library is changing logos here, so those changes are not sent back.
+    var quiet = false
+    /// Called after the person changes a logo, so sync can send it.
+    var onChange: (() -> Void)?
 
     /// Lookups happen once per logo per redraw; a linear scan of the asset list
     /// showed up in every sign that renders.
     private var byID: [UUID: LogoAsset] = [:]
+    /// Guards `cache`, `nameCache` and `byID`, so artwork can be prepared on a background
+    /// queue while the screen draws. Held only while a dictionary is read or written.
+    private let lock = NSLock()
     private var saveTask: Task<Void, Never>?
     private var loaded = false
 
@@ -109,6 +120,19 @@ final class LogoLibrary: ObservableObject {
                 + defaultFeatureNames.map { LogoAsset(name: $0, kind: .feature) }
         }
         syncBundledFolders()
+        // Observers do not run while an initializer sets the list, so build the lookup here.
+        lock.lock()
+        byID = Dictionary(assets.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        lock.unlock()
+    }
+
+    /// Decodes and trims every logo on a background queue, so the first sign drawn after
+    /// launch finds its artwork ready instead of decoding it while the screen waits.
+    func prewarm() {
+        let ids = assets.map { $0.id }
+        DispatchQueue.global(qos: .utility).async { [self] in
+            for id in ids { _ = image(id: id) }
+        }
     }
 
     /// Every PNG in the app's Logos folder becomes an entry, so dropping files
@@ -119,7 +143,9 @@ final class LogoLibrary: ObservableObject {
     /// Builds the whole list before assigning once. Adding files one at a time
     /// re-encoded and rewrote the index for every PNG in the folder at launch.
     func syncBundledFolders() {
+        LogoLibrary.scanLock.lock()
         LogoLibrary.scanCache = [:]
+        LogoLibrary.scanLock.unlock()
         var next = assets
         for kind in LogoKind.allCases {
             for file in LogoLibrary.bundledFiles(kind) {
@@ -149,8 +175,13 @@ final class LogoLibrary: ObservableObject {
     /// A file counts as a brand or feature by the folder it sits in, at any depth.
     private static var scanCache: [LogoKind: [(name: String, variant: String, url: URL)]] = [:]
 
+    private static let scanLock = NSLock()
+
     static func bundledFiles(_ kind: LogoKind) -> [(name: String, variant: String, url: URL)] {
-        if let hit = scanCache[kind] { return hit }
+        scanLock.lock()
+        let cached = scanCache[kind]
+        scanLock.unlock()
+        if let hit = cached { return hit }
         var out: [(name: String, variant: String, url: URL)] = []
         let wanted = kind == .brand ? "brands" : "features"
         let allowed: Set<String> = ["png", "jpg", "jpeg"]
@@ -179,7 +210,9 @@ final class LogoLibrary: ObservableObject {
             if name.isEmpty { continue }
             out.append((name, variant, url))
         }
+        scanLock.lock()
         scanCache[kind] = out
+        scanLock.unlock()
         return out
     }
 
@@ -312,20 +345,28 @@ final class LogoLibrary: ObservableObject {
     }
 
     func image(id: UUID) -> UIImage? {
-        if let hit = cache[id] { return hit }
-        guard let asset = byID[id] ?? assets.first(where: { $0.id == id }) else { return nil }
+        lock.lock()
+        let hit = cache[id]
+        var known = byID[id]
+        lock.unlock()
+        if let hit = hit { return hit }
+        // Only the main thread may read the asset list; the lookup above covers the rest.
+        if known == nil && Thread.isMainThread { known = assets.first(where: { $0.id == id }) }
+        guard let asset = known else { return nil }
+
+        var result: UIImage? = nil
         if asset.hasImage,
            let image = LogoLibrary.downsampled(dir.appendingPathComponent(asset.fileName)) {
-            let trimmed = LogoLibrary.trimmed(image)
-            cache[id] = trimmed
-            return trimmed
+            result = LogoLibrary.trimmed(image)
+        } else if let bundled = LogoLibrary.bundledImage(named: asset.name, variant: asset.variantLabel) {
+            result = LogoLibrary.trimmed(bundled)
         }
-        if let bundled = LogoLibrary.bundledImage(named: asset.name, variant: asset.variantLabel) {
-            let trimmed = LogoLibrary.trimmed(bundled)
-            cache[id] = trimmed
-            return trimmed
+        if let result = result {
+            lock.lock()
+            cache[id] = result
+            lock.unlock()
         }
-        return nil
+        return result
     }
 
     /// A PNG exported with padding around the mark wastes the sign's logo box.
@@ -355,13 +396,15 @@ final class LogoLibrary: ObservableObject {
         guard drawn else { return image }
 
         var minX = w, minY = h, maxX = -1, maxY = -1
-        for y in 0..<h {
-            let row = y * w
-            for x in 0..<w where alpha[row + x] > threshold {
-                if x < minX { minX = x }
-                if x > maxX { maxX = x }
-                if y < minY { minY = y }
-                if y > maxY { maxY = y }
+        alpha.withUnsafeBufferPointer { px in
+            for y in 0..<h {
+                let row = y * w
+                for x in 0..<w where px[row + x] > threshold {
+                    if x < minX { minX = x }
+                    if x > maxX { maxX = x }
+                    if y < minY { minY = y }
+                    if y > maxY { maxY = y }
+                }
             }
         }
 
@@ -376,7 +419,7 @@ final class LogoLibrary: ObservableObject {
 
     /// Logos print at most 190pt wide but the source files are full-resolution.
     /// Decoding a thumbnail keeps memory and draw cost proportional to what is shown.
-    static func downsampled(_ url: URL, maxPixel: CGFloat = 600) -> UIImage? {
+    static func downsampled(_ url: URL, maxPixel: CGFloat = 900) -> UIImage? {
         let options = [kCGImageSourceShouldCache: false] as CFDictionary
         guard let source = CGImageSourceCreateWithURL(url as CFURL, options) else {
             return UIImage(contentsOfFile: url.path)
@@ -385,7 +428,7 @@ final class LogoLibrary: ObservableObject {
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxPixel * UIScreen.main.scale
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel
         ] as CFDictionary
         guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOptions) else {
             return UIImage(contentsOfFile: url.path)
@@ -447,14 +490,81 @@ final class LogoLibrary: ObservableObject {
 
     func image(named name: String, kind: LogoKind, variant: String = "") -> UIImage? {
         let key = kind.rawValue + "|" + name.lowercased() + "|" + variant.lowercased()
-        if let hit = nameCache[key] { return hit }
+        lock.lock()
+        let hit = nameCache[key]
+        lock.unlock()
+        if let hit = hit { return hit }
         guard let asset = asset(named: name, kind: kind, variant: variant) else {
+            lock.lock()
             nameCache.updateValue(nil, forKey: key)
+            lock.unlock()
             return nil
         }
         let found = image(id: asset.id)
+        lock.lock()
         nameCache[key] = found
+        lock.unlock()
         return found
+    }
+
+    // MARK: - Library file
+
+    /// Logos whose artwork was added or replaced on this phone, for the Library file.
+    /// Artwork that ships inside the app is left out; every phone already has it.
+    func exportableLogos() -> [LibraryFile.LogoEntry] {
+        var out: [LibraryFile.LogoEntry] = []
+        for asset in assets where asset.hasImage {
+            guard let data = try? Data(contentsOf: dir.appendingPathComponent(asset.fileName)) else { continue }
+            out.append(LibraryFile.LogoEntry(name: asset.name, kind: asset.kind, variant: asset.variant, png: data))
+        }
+        return out
+    }
+
+    // MARK: - Shared Library
+
+    func asset(id: UUID) -> LogoAsset? {
+        return assets.first { $0.id == id }
+    }
+
+    /// The logo with exactly this kind, name and version label, ignoring capitals.
+    func existing(kind: LogoKind, name: String, variant: String) -> LogoAsset? {
+        return assets.first {
+            $0.kind == kind
+                && $0.name.caseInsensitiveCompare(name) == .orderedSame
+                && $0.variantLabel.caseInsensitiveCompare(variant) == .orderedSame
+        }
+    }
+
+    /// The artwork picture saved for a logo, if it has its own (not one shipped in the app).
+    func artworkData(id: UUID) -> Data? {
+        guard let asset = asset(id: id), asset.hasImage else { return nil }
+        return try? Data(contentsOf: dir.appendingPathComponent(asset.fileName))
+    }
+
+    /// A cheap stand-in for "has the artwork changed": file size and time. Empty when the
+    /// logo has no artwork of its own.
+    func artworkStamp(id: UUID) -> String {
+        guard let asset = asset(id: id), asset.hasImage else { return "" }
+        let path = dir.appendingPathComponent(asset.fileName).path
+        guard let info = try? FileManager.default.attributesOfItem(atPath: path) else { return "" }
+        let size = (info[.size] as? NSNumber)?.intValue ?? 0
+        let time = (info[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        return String(size) + ":" + String(Int(time * 1000))
+    }
+
+    /// Makes this logo's name and kind match the shared one, adding the logo if it is new.
+    func applyShared(id: UUID, kind: LogoKind, name: String, variant: String) {
+        let version: String? = variant.isEmpty ? nil : variant
+        if let i = assets.firstIndex(where: { $0.id == id }) {
+            assets[i].kind = kind
+            assets[i].name = name
+            assets[i].variant = version
+        } else {
+            assets.append(LogoAsset(id: id, name: name, kind: kind, variant: version))
+        }
+        lock.lock()
+        cache[id] = nil
+        lock.unlock()
     }
 
     // MARK: - Writing
@@ -476,7 +586,9 @@ final class LogoLibrary: ObservableObject {
         guard let i = assets.firstIndex(where: { $0.id == id }) else { return }
         let clean = variant.trimmingCharacters(in: .whitespacesAndNewlines)
         assets[i].variant = clean.isEmpty ? nil : clean
+        lock.lock()
         cache[id] = nil
+        lock.unlock()
     }
 
     func rename(_ id: UUID, to name: String) {
@@ -491,13 +603,18 @@ final class LogoLibrary: ObservableObject {
         let scaled = LogoLibrary.downscale(image, longEdge: 600)
         guard let data = scaled.pngData() else { return }
         try? data.write(to: dir.appendingPathComponent(assets[i].fileName), options: .atomic)
+        lock.lock()
         cache[id] = scaled
+        lock.unlock()
         assets[i].hasImage = true
     }
 
-    func setImage(data: Data, for id: UUID) {
-        guard let image = UIImage(data: data) else { return }
+    /// False when the data is not a picture iOS can decode (SVG, for one).
+    @discardableResult
+    func setImage(data: Data, for id: UUID) -> Bool {
+        guard let image = UIImage(data: data) else { return false }
         setImage(image, for: id)
+        return true
     }
 
     /// Reads an image off the system clipboard — the copy-paste path.
@@ -519,7 +636,9 @@ final class LogoLibrary: ObservableObject {
     func clearImage(for id: UUID) {
         guard let i = assets.firstIndex(where: { $0.id == id }) else { return }
         try? FileManager.default.removeItem(at: dir.appendingPathComponent(assets[i].fileName))
+        lock.lock()
         cache[id] = nil
+        lock.unlock()
         assets[i].hasImage = false
     }
 

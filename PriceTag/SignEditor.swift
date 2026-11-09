@@ -12,11 +12,22 @@ import SwiftUI
 /// Only the fields used by the sign's type are shown.
 struct SignEditor: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var store: Store
     @ObservedObject private var logos = LogoLibrary.shared
     @Binding var sign: Sign
-    var saveToLibrary: () -> Void
+    /// True when the sign sits on a landscape page, so the preview shows that layout.
+    var landscape: Bool = false
+    /// The word after the arrow on the back button.
+    var backTitle: String = "Page"
+    var saveToLibrary: () -> LibrarySaveResult
 
-    @State private var fitmentText: String = ""
+    /// Briefly says what the last tap on Save did.
+    @State private var saveFlash: String?
+    /// A sign already in the Library that looks like this one, found when saving.
+    @State private var lookAlike: (match: Sign, others: Int)?
+    /// Linked price fields currently holding a value the app suggested, and the exact
+    /// text it wrote. A field edited by hand no longer matches, so it stops counting.
+    @State private var suggested: [PriceField: String] = [:]
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -26,7 +37,7 @@ struct SignEditor: View {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack {
                         Button(action: { dismiss() }) {
-                            Text("← Page")
+                            Text("← " + backTitle)
                                 .font(pt(15, .medium))
                                 .foregroundColor(.ptAccent)
                         }
@@ -36,31 +47,35 @@ struct SignEditor: View {
                     .padding(.top, 10)
                     .padding(.bottom, 14)
 
-                    ScaledSign(sign: sign)
+                    ScaledSign(sign: sign, landscape: landscape)
                         .padding(16)
                         .background(Color.ptInset)
                         .cornerRadius(12)
 
-                    Text("Live preview · actual print size 7.5 × 2.375 in")
+                    Text(landscape ? "Live preview · actual print size 10 × 3.67 in" : "Live preview · actual print size 7.5 × 2.375 in")
                         .font(pt(11))
                         .foregroundColor(Color.white.opacity(0.3))
                         .frame(maxWidth: .infinity)
                         .padding(.top, 8)
 
-                    HStack {
-                        Overline(text: "Sign type")
-                        Spacer()
-                        Text("Switch any time — entries are kept")
-                            .font(pt(11))
-                            .foregroundColor(Color.white.opacity(0.3))
+                    // A landscape page holds Parts signs only, so the type stays put.
+                    if !landscape {
+                        HStack {
+                            Overline(text: "Sign type")
+                            Spacer()
+                            Text("Switch any time — entries are kept")
+                                .font(pt(11))
+                                .foregroundColor(Color.white.opacity(0.3))
+                        }
+                        .padding(.top, 24).padding(.bottom, 10)
+                        typeSwitcher
                     }
-                    .padding(.top, 24).padding(.bottom, 10)
-                    typeSwitcher
 
                     Overline(text: "Product").padding(.top, 24).padding(.bottom, 10)
                     CardGroup {
                         brandRow
                         if brandVersions.count > 1 { variantRow }
+                        alignRow
                         FieldRow(label: "Name", text: $sign.name, placeholder: "GT-Air 3")
                         if sign.type != .used {
                             FieldRow(label: "Colour", text: $sign.variant, placeholder: "Solid matte black")
@@ -85,14 +100,42 @@ struct SignEditor: View {
 
                     Overline(text: "Price").padding(.top, 24).padding(.bottom, 10)
                     CardGroup {
-                        if sign.type == .sale || sign.type == .clearance || sign.type == .used {
-                            FieldRow(label: "Was", text: $sign.regularPrice, placeholder: "1309.95", keyboard: .decimalPad)
+                        if sign.usesComparison {
+                            FieldRow(
+                                label: "Was",
+                                text: $sign.regularPrice,
+                                placeholder: "1309.95",
+                                keyboard: .decimalPad,
+                                tag: priceTag(for: .was),
+                                onTagTap: priceTagAction(for: .was)
+                            )
                         }
-                        if sign.type == .clearance || sign.type == .sale || sign.type == .used {
-                            FieldRow(label: "% off", text: $sign.percentOff, placeholder: "10", keyboard: .numberPad)
+                        if sign.usesComparison {
+                            FieldRow(
+                                label: "% off",
+                                text: $sign.percentOff,
+                                placeholder: "10",
+                                keyboard: .numberPad,
+                                tag: priceTag(for: .percent),
+                                onTagTap: priceTagAction(for: .percent)
+                            )
                         }
-                        FieldRow(label: "Price", text: $sign.price, placeholder: "1178.95", keyboard: .decimalPad)
+                        FieldRow(
+                            label: "Price",
+                            text: $sign.price,
+                            placeholder: "1178.95",
+                            keyboard: .decimalPad,
+                            tag: sign.usesComparison ? priceTag(for: .price) : nil,
+                            onTagTap: sign.usesComparison ? priceTagAction(for: .price) : nil
+                        )
                         priceStyleRow
+                    }
+
+                    if sign.usesComparison {
+                        Text("Fill in any two of Was, % off and Price and the third is suggested. Type over a suggestion to use your own value.")
+                            .font(pt(11))
+                            .foregroundColor(Color.white.opacity(0.3))
+                            .padding(.top, 8)
                     }
 
                     HStack {
@@ -105,25 +148,19 @@ struct SignEditor: View {
                     .padding(.top, 24).padding(.bottom, 10)
                     logoChips
 
+                    if sign.banner != nil {
+                        CardGroup {
+                            spotRow(label: "Banner", selection: $sign.bannerSpot, headerTitle: "By brand")
+                        }
+                        .padding(.top, 10)
+                        Text("Auto keeps the banner beside the brand logo and moves it to the right when the logo would get too small.")
+                            .font(pt(11))
+                            .foregroundColor(Color.white.opacity(0.3))
+                            .padding(.top, 8)
+                    }
+
                     if sign.type == .used {
-                        Overline(text: "Fitment — one per line").padding(.top, 24).padding(.bottom, 10)
-                        TextEditor(text: $fitmentText)
-                            .font(pt(14, .medium))
-                            .foregroundColor(.white)
-                            .scrollContentBackground(.hidden)
-                            .frame(height: 100)
-                            .padding(10)
-                            .background(Color.ptCard)
-                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                    .strokeBorder(Color.ptHair, lineWidth: 1)
-                            )
-                            .onChange(of: fitmentText) { newValue in
-                                sign.fitment = newValue
-                                    .components(separatedBy: "\n")
-                                    .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-                            }
+                        FitmentEditor(sign: $sign, landscape: landscape)
                     }
 
                     Overline(text: "Note line").padding(.top, 24).padding(.bottom, 10)
@@ -136,8 +173,8 @@ struct SignEditor: View {
             }
 
             HStack(spacing: 10) {
-                Button(action: { saveToLibrary() }) {
-                    Text("Save")
+                Button(action: attemptSave) {
+                    Text(saveFlash ?? (sign.libraryID == nil ? "Save" : "Update"))
                         .font(pt(15, .semibold))
                         .foregroundColor(.white)
                         .padding(.horizontal, 20)
@@ -154,7 +191,156 @@ struct SignEditor: View {
             .background(Color.ptBG.ignoresSafeArea())
         }
         .navigationBarHidden(true)
-        .onAppear { fitmentText = sign.fitment.joined(separator: "\n") }
+        .onAppear {
+            restoreSuggestionState()
+        }
+        .onChange(of: sign.regularPrice) { priceFieldEdited(.was) }
+        .onChange(of: sign.percentOff) { priceFieldEdited(.percent) }
+        .onChange(of: sign.price) { priceFieldEdited(.price) }
+        .onChange(of: sign.type) { priceFieldEdited(nil) }
+        .alert(DuplicateWarning.title, isPresented: Binding(
+            get: { lookAlike != nil },
+            set: { if !$0 { lookAlike = nil } }
+        )) {
+            Button("Open it") {
+                if let existing = lookAlike?.match { openExisting(existing) }
+            }
+            Button("Save anyway") { saveNow() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(lookAlike.map { DuplicateWarning.message($0) } ?? "")
+        }
+    }
+
+    // MARK: Saving to the Library
+
+    /// Saves, unless that would add a second copy of a sign the Library already has. Then
+    /// it asks first.
+    private func attemptSave() {
+        if let found = store.lookAlike(for: sign) {
+            lookAlike = found
+        } else {
+            saveNow()
+        }
+    }
+
+    private func saveNow() {
+        let result = saveToLibrary()
+        switch result {
+        case .saved:         saveFlash = "Saved ✓"
+        case .updated:       saveFlash = "Updated ✓"
+        case .savedPersonal: saveFlash = "Saved as your copy ✓"
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { saveFlash = nil }
+    }
+
+    /// Swaps this sign for the Library entry that looks like it. Saving afterwards updates
+    /// that entry, or, if it is someone else's, makes a personal copy and a request.
+    private func openExisting(_ existing: Sign) {
+        var opened = existing.pageCopy()
+        opened.id = sign.id
+        opened.landscape = sign.landscape
+        sign = opened
+        saveFlash = "Opened the existing sign"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { saveFlash = nil }
+    }
+
+    // MARK: Linked price fields
+
+    private let priceFields: [PriceField] = [.was, .percent, .price]
+
+    private func hasText(_ field: PriceField) -> Bool {
+        return !sign.text(for: field).trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// True while the field still holds exactly what the app wrote into it.
+    private func isSuggested(_ field: PriceField) -> Bool {
+        guard let written = suggested[field] else { return false }
+        return sign.text(for: field) == written
+    }
+
+    /// What the other two fields imply for this one, when both were filled in by hand.
+    private func impliedValue(for field: PriceField) -> String? {
+        let others = priceFields.filter { $0 != field }
+        guard others.allSatisfy({ hasText($0) && !isSuggested($0) }) else { return nil }
+        return PriceSuggestion.suggestion(
+            for: field,
+            was: sign.regularPrice,
+            percent: sign.percentOff,
+            price: sign.price
+        )
+    }
+
+    private func applySuggestion(_ value: String, to field: PriceField) {
+        sign.setText(value, for: field)
+        suggested[field] = value
+    }
+
+    /// Empties every field that still holds a suggestion, once there is nothing to base it on.
+    private func clearSuggestions() {
+        for field in priceFields where isSuggested(field) {
+            sign.setText("", for: field)
+        }
+        suggested = [:]
+    }
+
+    /// Runs whenever Was, % off or Price changes (or the sign type does, with nil).
+    ///
+    /// With exactly two fields entered by hand, the third gets a suggestion. A field
+    /// the user is typing in is never overwritten, and once they type over a
+    /// suggestion it counts as theirs, so it stays put when the other fields change.
+    private func priceFieldEdited(_ edited: PriceField?) {
+        guard sign.usesComparison else { return }
+
+        if let edited = edited {
+            // Our own write landing in the field is not an edit.
+            if isSuggested(edited) { return }
+            // Typing over or clearing a suggestion makes the value the user's own.
+            suggested[edited] = nil
+        }
+
+        let entered = priceFields.filter { hasText($0) && !isSuggested($0) }
+        if entered.count < 2 {
+            clearSuggestions()
+            return
+        }
+        guard entered.count == 2,
+              let target = priceFields.first(where: { !entered.contains($0) }),
+              target != edited else { return }
+
+        if let value = PriceSuggestion.suggestion(
+            for: target,
+            was: sign.regularPrice,
+            percent: sign.percentOff,
+            price: sign.price
+        ) {
+            applySuggestion(value, to: target)
+        } else {
+            clearSuggestions()
+        }
+    }
+
+    /// A saved sign whose price still follows from its Was and % off keeps treating
+    /// the price as a suggestion, so editing Was or % off updates it again.
+    private func restoreSuggestionState() {
+        guard sign.usesComparison,
+              let implied = PriceSuggestion.derivePrice(was: sign.regularPrice, percent: sign.percentOff),
+              let stored = PriceSuggestion.amount(sign.price),
+              stored == PriceSuggestion.amount(implied) else { return }
+        suggested[.price] = sign.price
+    }
+
+    /// "Suggested" on a field holding a suggestion; "Use $1178.95" on an empty field
+    /// whose value the other two fields imply, so a cleared suggestion can be brought back.
+    private func priceTag(for field: PriceField) -> String? {
+        if isSuggested(field) { return "Suggested" }
+        guard !hasText(field), let value = impliedValue(for: field) else { return nil }
+        return "Use " + (field == .percent ? value + "%" : "$" + value)
+    }
+
+    private func priceTagAction(for field: PriceField) -> (() -> Void)? {
+        guard !isSuggested(field), !hasText(field), let value = impliedValue(for: field) else { return nil }
+        return { applySuggestion(value, to: field) }
     }
 
     /// Changing the type re-flows which fields the editor shows and which banner the
@@ -199,7 +385,7 @@ struct SignEditor: View {
         switch type {
         case .regular:   return "Regular"
         case .sale:      return "Sale"
-        case .clearance: return "Clearance"
+        case .clearance: return "End of season"
         case .used:      return "Part"
         case .apparel:   return "Apparel"
         }
@@ -258,6 +444,29 @@ struct SignEditor: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 5)
+            Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
+        }
+    }
+
+    /// Whether the logos find their own place over the name, or are held flush left.
+    private var alignRow: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Text("Align")
+                    .font(pt(14))
+                    .foregroundColor(Color.white.opacity(0.5))
+                    .frame(width: 78, alignment: .leading)
+                Picker("", selection: Binding(
+                    get: { sign.logoAlignment ?? .auto },
+                    set: { sign.logoAlignment = $0 == .auto ? nil : $0 }
+                )) {
+                    Text("Auto").tag(LogoAlignment.auto)
+                    Text("Left").tag(LogoAlignment.left)
+                }
+                .pickerStyle(.segmented)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
             Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
         }
     }
@@ -325,6 +534,36 @@ struct SignEditor: View {
                 )
         }
         .buttonStyle(.plain)
+    }
+
+    /// Auto, the header row, or the right-hand side of the sign.
+    private func spotRow(label: String, selection: Binding<MarkSpot?>, headerTitle: String) -> some View {
+        func title(_ spot: MarkSpot) -> String {
+            switch spot {
+            case .auto:   return "Auto"
+            case .header: return headerTitle
+            case .side:   return "Right"
+            }
+        }
+        return HStack(spacing: 12) {
+            Text(label)
+                .font(pt(14))
+                .foregroundColor(Color.white.opacity(0.5))
+                .frame(width: 78, alignment: .leading)
+
+            HStack(spacing: 3) {
+                ForEach(MarkSpot.allCases, id: \.self) { spot in
+                    styleOption(title: title(spot), on: (selection.wrappedValue ?? .auto) == spot) {
+                        selection.wrappedValue = spot == .auto ? nil : spot
+                    }
+                }
+            }
+            .padding(3)
+            .background(Color.white.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 
     private var logoChips: some View {

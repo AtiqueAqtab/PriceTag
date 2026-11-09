@@ -15,3 +15,7 @@ The two coordinate systems are flipped relative to each other. Each sign is tran
 ## Sharing
 
 The PDF is written to the temporary directory and handed to `ShareLink`, which provides AirDrop, Print, Save to Files and Mail.
+
+## Landscape sheets
+
+A sheet with two slots is a landscape sheet. `exportPDF` starts that PDF page at 792 × 612 points and draws two 720 × 264 point signs between half-inch margins. Packing keeps landscape and standard signs on sheets of their own.
